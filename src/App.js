@@ -1,17 +1,14 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { Button } from "./components/ui/button";
 import { Slider } from "./components/ui/slider";
 import logo from './logo.svg';
-
-// Configuración del laberinto
-const WIDTH = 39;
-const HEIGHT = 33;
 
 
 // Generador de laberintos mejorado
 function generateMaze(width, height, start, goal, wallPercent = 0.05) {
   // Inicializar todo como muro (1)
   const maze = Array(height).fill().map(() => Array(width).fill(1));
+  const costs = Array(height).fill().map(() => Array(width).fill(Infinity));
   
   // Función auxiliar para tallar pasillos
   function carve(x, y) {
@@ -130,7 +127,17 @@ for (let i = 1; i < height - 1; i++) {
   }
 
 
-  return maze;
+  // Asigna costos aleatorios a los pasillos (por ejemplo, entre 1 y 9)
+  for (let i = 0; i < height; i++) {
+    for (let j = 0; j < width; j++) {
+      if (maze[i][j] === 0) {
+        costs[i][j] = Math.floor(Math.random() * 9) + 1;
+      }
+    }
+  }
+
+  // Devuelve ambos: el laberinto y la matriz de costos
+  return { maze, costs };
 }
 
 const directions = [[0, 1], [1, 0], [0, -1], [-1, 0]]; // Izquierda (←) → Abajo (↓) → Derecha (→) → Arriba (↑)
@@ -173,7 +180,7 @@ async function bfs(start, goal, maze, onVisit, delay) {
 // Función de validación independiente
 function isValid(pos, maze) {
   const [x, y] = pos;
-  return x >= 0 && x < HEIGHT && y >= 0 && y < WIDTH && maze[x][y] === 0;
+  return x >= 0 && x < maze.length && y >= 0 && y < maze[0].length && maze[x][y] === 0;
 }
 
 // DFS (Búsqueda en Profundidad)
@@ -357,13 +364,55 @@ async function bidirectional(start, goal, maze, onVisit, delay) {
   return { path: null, steps, maxQueueSize, visited: visitedStart.size + visitedGoal.size };
 }
 
+// Algoritmo de Búsqueda de Costo Uniforme (UCS)
+async function ucs(start, goal, maze, costs, onVisit, delay) {
+  let queue = [[0, [start]]];
+  let visited = new Map();
+  visited.set(start.toString(), 0);
+  let steps = 0;
+  let maxQueueSize = 1;
+
+  while (queue.length > 0) {
+    queue.sort((a, b) => a[0] - b[0]);
+    maxQueueSize = Math.max(maxQueueSize, queue.length);
+
+    const [cost, path] = queue.shift();
+    const [x, y] = path[path.length - 1];
+    steps++;
+
+    onVisit?.(x, y, steps, queue.length);
+
+    if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+
+    if (x === goal[0] && y === goal[1]) {
+      maxQueueSize = Math.max(maxQueueSize, queue.length);
+      return { path, steps, maxQueueSize, visited: visited.size };
+    }
+
+    for (let [dx, dy] of directions) {
+      const next = [x + dx, y + dy];
+      const nextKey = next.toString();
+      if (isValid(next, maze)) {
+        const newCost = cost + costs[next[0]][next[1]];
+        if (!visited.has(nextKey) || newCost < visited.get(nextKey)) {
+          visited.set(nextKey, newCost);
+          queue.push([newCost, [...path, next]]);
+        }
+      }
+    }
+  }
+  maxQueueSize = Math.max(maxQueueSize, queue.length);
+  return { path: null, steps, maxQueueSize, visited: visited.size };
+}
+
 export default function Laberinto() {
   const [dlsLimit, setDlsLimit] = useState(50);
-  const [start, setStart] = useState([17, 0]);
-  const [goal, setGoal] = useState([17, 19]);
+    const [width, setwidth] = useState(39);
+  const [height, setheight] = useState(33);
+  const [start, setStart] = useState([Math.ceil(height/2), 0]);
+  const [goal, setGoal] = useState([Math.ceil(height/2), Math.trunc(width/2)]);
   const [wallPercent, setWallPercent] = useState(0.05);
 
-  const [maze, setMaze] = useState(() => generateMaze(WIDTH, HEIGHT, start, goal, wallPercent));
   const [path, setPath] = useState([]);
   const [visited, setVisited] = useState(new Set());
   const [algo, setAlgo] = useState("bfs");
@@ -373,22 +422,32 @@ export default function Laberinto() {
   const [speed, setSpeed] = useState(0);
   const [showStats, setShowStats] = useState(false);
   const [meetingPoint, setMeetingPoint] = useState(null);
+
+  // Sincroniza start y goal cuando cambian width o height
+  useEffect(() => {
+    const y = Math.ceil(height / 2);
+    setStart([y, 0]);
+    setGoal([y, Math.trunc(width / 2)]);
+  }, [width, height]);
   
   //mapeo de algoritmos 
-  const algorithms = {
-    bfs: (start, goal, maze, onVisit, delay) => bfs(start, goal, maze, onVisit, delay),
-    dfs: (start, goal, maze, onVisit, delay) => dfs(start, goal, maze, onVisit, delay),
-    dls: (start, goal, maze, onVisit, delay) => dls(start, goal, maze, onVisit, dlsLimit, delay),
-    ids: (start, goal, maze, onVisit, delay) => ids(start, goal, maze, onVisit, delay),
-    bidirectional: (start, goal, maze, onVisit, delay) => bidirectional(start, goal, maze, onVisit, delay),
-  };
+    const algorithms = {
+      bfs: (start, goal, maze, onVisit, delay) => bfs(start, goal, maze, onVisit, delay),
+      dfs: (start, goal, maze, onVisit, delay) => dfs(start, goal, maze, onVisit, delay),
+      dls: (start, goal, maze, onVisit, delay) => dls(start, goal, maze, onVisit, dlsLimit, delay),
+      ids: (start, goal, maze, onVisit, delay) => ids(start, goal, maze, onVisit, delay),
+      bidirectional: (start, goal, maze, onVisit, delay) => bidirectional(start, goal, maze, onVisit, delay),
+       ucs: (start, goal, maze, onVisit, delay) => ucs(start, goal, maze, costs, onVisit, delay),
+    };
 
   // Generar un nuevo laberinto
-  const generateNewMaze = useCallback(() => {
-    const newMaze = generateMaze(WIDTH, HEIGHT, start, goal, wallPercent);
-    setMaze(newMaze);
-    reset();
-  }, [start, goal, wallPercent]);
+const [{ maze, costs }, setMazeData] = useState(() => generateMaze(width, height, start, goal, wallPercent));
+
+// Cambia generateNewMaze y donde uses setMaze:
+const generateNewMaze = useCallback(() => {
+  setMazeData(generateMaze(width, height, start, goal, wallPercent));
+  reset();
+}, [width, height, start, goal, wallPercent]);
 
   // Resetear el laberinto
   function reset() {
@@ -474,6 +533,9 @@ async function solve() {
       {isStart && (stats && stats.found ?'S':<img src={logo} alt="Logo" className="w-40 h-40"/>) }
       {isGoal && (stats && stats.found ? <img src={logo} alt="Logo" className="w-40 h-40" /> : 'G')}
       {isMeetingPoint && algo === 'bidirectional' && 'M'}
+      {algo === "ucs" && !isWall && !isStart && !isGoal && costs && costs[x][y] !== Infinity && (
+        <span className="text-xs text-gray-700">{costs[x][y]}</span>
+      )}
     </div>
   );
   }
@@ -487,24 +549,52 @@ async function solve() {
         <div className="w-full md:w-1/3 space-y-4">
           <div className="bg-white p-4 rounded-lg shadow">
               <h2 className="text-lg font-semibold mb-2">Configuración</h2>
-              <p className="text-sm mb-2">Tamaño: X={WIDTH} Y={HEIGHT}</p>
+              <p className="block text-sm font-medium mb-1">Tamaño </p>
                         {/* Inputs para start y goal */}
+
+                        <div className="mb-4 flex gap-2">
+                            <div>
+                              <label className="block text-xs">Ancho X</label>
+                              <input
+                                type="number"
+                                min={11}
+                                max={99}
+                                value={width}
+                                onChange={e => setwidth(Number(e.target.value))}
+                                className="w-16 p-1 border rounded"
+                                disabled={isSolving}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs">Alto Y</label>
+                              <input
+                                type="number"
+                                min={11}
+                                max={99}
+                                value={height}
+                                onChange={e => setheight(Number(e.target.value))}
+                                className="w-16 p-1 border rounded"
+                                disabled={isSolving}
+                              />
+                            </div>
+                          </div>
+                          <p className="block text-sm font-medium mb-1">Posición </p>
             <div className="mb-4 flex gap-2">
               <div>
                 <label className="block text-xs">Inicio X</label>
-                <input type="number" min={0} max={WIDTH-1} value={start[1]} onChange={e => setStart([start[0], +e.target.value])} className="w-16 p-1 border rounded" />
+                <input type="number" min={0} max={width-1} value={start[1]} onChange={e => setStart([start[0], +e.target.value])} className="w-16 p-1 border rounded" />
               </div>
               <div>
                 <label className="block text-xs">Inicio Y</label>
-                <input type="number" min={0} max={HEIGHT-1} value={start[0]} onChange={e => setStart([+e.target.value, start[1]])} className="w-16 p-1 border rounded" />
+                <input type="number" min={0} max={height-1} value={start[0]} onChange={e => setStart([+e.target.value, start[1]])} className="w-16 p-1 border rounded" />
               </div>
               <div>
                 <label className="block text-xs">Meta X</label>
-                <input type="number" min={0} max={WIDTH-1} value={goal[1]} onChange={e => setGoal([goal[0], +e.target.value])} className="w-16 p-1 border rounded" />
+                <input type="number" min={0} max={width-1} value={goal[1]} onChange={e => setGoal([goal[0], +e.target.value])} className="w-16 p-1 border rounded" />
               </div>
               <div>
                 <label className="block text-xs">Meta Y</label>
-                <input type="number" min={0} max={HEIGHT-1} value={goal[0]} onChange={e => setGoal([+e.target.value, goal[1]])} className="w-16 p-1 border rounded" />
+                <input type="number" min={0} max={height-1} value={goal[0]} onChange={e => setGoal([+e.target.value, goal[1]])} className="w-16 p-1 border rounded" />
               </div>
             </div>
             
@@ -524,6 +614,7 @@ async function solve() {
   <option value="dls">Profundidad Acotada (DLS)</option>
   <option value="ids">Profundidad Iterativa (IDS)</option>
   <option value="bidirectional">Búsqueda Bidireccional</option>
+  <option value="ucs">Búsqueda de Costo Uniforme (UCS)</option>
 </select>
             </div>
 
@@ -533,7 +624,7 @@ async function solve() {
     <input
       type="number"
       min={1}
-      max={WIDTH * HEIGHT}
+      max={width * height}
       value={dlsLimit}
       onChange={e => setDlsLimit(Number(e.target.value))}
       disabled={isSolving}
@@ -560,7 +651,7 @@ async function solve() {
                 value={algo=="ids"?0:[speed]}
                 onValueChange={([value]) => setSpeed(value)}
                 min={0}
-                max={algo=="ids"?0:30}
+                max={algo=="ids"?0:300}
                 step={1}
                 disabled={isSolving||algo=="ids"}
               />
@@ -650,11 +741,12 @@ async function solve() {
         </div>
         
         {/* Laberinto */}
-        <div className="w-full md:w-2/3">
+                {/* <div className={width < 15 ? w-full md:w-1/3 : w-full md:w-2/3}></div> */}
+        <div className={width < 20 ? "w-full md:w-1/3" : "w-full md:w-2/3"}>
           <div 
             className="grid gap-px p-1 bg-gray-300 rounded-lg overflow-hidden shadow-lg"
             style={{
-              gridTemplateColumns: `repeat(${WIDTH}, minmax(0, 1fr))`
+              gridTemplateColumns: `repeat(${width}, minmax(0, 1fr))`
             }}
           >
             {maze.map((row, i) =>
