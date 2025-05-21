@@ -663,6 +663,9 @@ async function solve() {
           </div>
         </div>
       </div>
+          <footer className="mt-8 text-center text-gray-500 text-sm">
+      Marcos Gomez
+    </footer>
     </div>
   );
 }
