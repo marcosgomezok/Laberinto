@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { Button } from "./components/ui/button";
 import { Slider } from "./components/ui/slider";
 import logo from './logo.svg';
